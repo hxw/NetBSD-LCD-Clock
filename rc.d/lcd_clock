@@ -1,0 +1,21 @@
+#!/bin/sh
+#
+# $NetBSD$
+#
+
+# PROVIDE: lcd_clock
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="lcd_clock"
+rcvar="${name}"
+command="/usr/pkg/libexec/${name}"
+
+load_rc_config "${name}"
+
+command_args="--daemon"
+required_dirs=""
+
+run_rc_command "${1}"
