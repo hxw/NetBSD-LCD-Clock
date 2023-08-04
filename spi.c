@@ -31,7 +31,7 @@ SPI_type *SPI_create(const char *spi_path, SPI_addr_type addr, uint32_t bps,
   // allocate memory
   SPI_type *spi = malloc(sizeof(SPI_type));
   if (NULL == spi) {
-    warn("falled to allocate SPI structure");
+    warn("failed to allocate SPI structure");
     return NULL;
   }
   spi->fd = open(spi_path, O_RDWR);

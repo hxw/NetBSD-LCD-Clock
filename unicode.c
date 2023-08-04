@@ -5,16 +5,20 @@
 #include <stdlib.h>
 
 // see: https://dev.to/rdentato/utf-8-strings-in-c-2-3-3kp1
-
-// the code here has been tidied up
+//
+// the code here is a tidied up version from the ideas presented in
+// the above article
 
 // the high 4 bits of each byte indicates the total bytes in a sequence
+// or if the byte is a continuation byte:
+//
 // 0xxx xxxx    plain ASCII               length=1
 // 10xx xxxx    UTF-8 continuation bytes  cannot be in a start position
 // 11xx xxxx    UTF-8 start byte          length=2…4 i.e., 1…3 continuation
 // bytes
 //
-// since valid lenght are > 0 can use zero as error indication
+// since valid lengths are greater than zero,
+// zero is used as the error value
 static uint8_t const lengths[] = {
     1, 1, 1, 1, // 00xx xxxx
     1, 1, 1, 1, // 01xx xxxx
@@ -56,7 +60,7 @@ static bool validate_packed(uint32_t c) {
 //
 // returns
 //   number of bytes in the source string to be consumed
-//   NOTE: will return a lenght of 1 with packed==0 on '\0'
+//   NOTE: will return a length of 1 with packed==0 on '\0'
 static int next_char(const char *src, uint32_t *packed) {
   uint32_t encoding = 0;
 
