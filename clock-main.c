@@ -25,13 +25,19 @@
 #include "unicode.h"
 
 #define X11_RGB(R, G, B)                                                       \
-  { .red = R, .green = G, .blue = B, .alpha = 255, }
+  {                                                                            \
+      .red = R,                                                                \
+      .green = G,                                                              \
+      .blue = B,                                                               \
+      .alpha = 255,                                                            \
+  }
 #include "x11-rgb-txt.h"
 
 // for setting the message line using:
 //   echo 'your message here' | nc -U /tmp/clock.sock
 // suggest some leading spaces (14) for message to scroll better
-#define UNIX_SOCKET "/tmp/clock.sock"
+#define UNIX_SOCKET_1 "/tmp/clock.sock"
+#define UNIX_SOCKET_2 "/tmp/clock2.sock"
 #define SOCKET_MODE (0777)
 
 // font configuration
@@ -82,6 +88,56 @@ static void dump_bitmap(const char *title, FT_Bitmap *bitmap) {
     printf("\n");
   }
 #endif
+}
+
+static int make_listen_socket(const char *unix_path) {
+
+  // Unix socket for message setup
+  int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (server_fd < 0) {
+    err(EXIT_FAILURE, "cannot create server socket");
+    /* NOTREACHED */
+  }
+
+  int value = 1;
+  int rc =
+      setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value));
+  if (rc < 0) {
+    err(EXIT_FAILURE, "cannot set server socket options");
+    /* NOTREACHED */
+  }
+
+  struct sockaddr_un saddr = {
+      .sun_len = sizeof(struct sockaddr_un),
+      .sun_family = AF_UNIX,
+      .sun_path = "/tmp/s", // dummy value
+  };
+
+  if (strlen(unix_path) > sizeof(saddr.sun_path) - 1) {
+    err(EXIT_FAILURE, "unix path is too long");
+    /* NOTREACHED */
+  }
+  strlcpy(saddr.sun_path, unix_path, sizeof(saddr.sun_path));
+
+  unlink(saddr.sun_path);
+
+  socklen_t saddr_len = sizeof(saddr);
+
+  rc = bind(server_fd, (struct sockaddr *)&saddr, saddr_len);
+  if (rc < 0) {
+    err(EXIT_FAILURE, "cannot bind server socket");
+    /* NOTREACHED */
+  }
+
+  rc = chmod(saddr.sun_path, SOCKET_MODE);
+  if (rc < 0) {
+    err(EXIT_FAILURE, "cannot set server socket mode");
+    /* NOTREACHED */
+  }
+
+  listen(server_fd, 10);
+
+  return server_fd;
 }
 
 void usage(const char *program) {
@@ -146,39 +202,17 @@ int main(int argc, char *argv[]) {
   tzset();
 
   // Unix socket for message setup
-  int server_fd = socket(AF_UNIX, SOCK_STREAM, 0);
-  if (server_fd < 0) {
+  int server_1_fd = make_listen_socket(UNIX_SOCKET_1);
+  if (server_1_fd < 0) {
     err(EXIT_FAILURE, "cannot create server socket");
+    /* NOTREACHED */
   }
 
-  int value = 1;
-  int rc =
-      setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &value, sizeof(value));
-  if (rc < 0) {
-    err(EXIT_FAILURE, "cannot set server socket options");
+  int server_2_fd = make_listen_socket(UNIX_SOCKET_2);
+  if (server_2_fd < 0) {
+    err(EXIT_FAILURE, "cannot create server socket");
+    /* NOTREACHED */
   }
-
-  struct sockaddr_un saddr = {
-      .sun_len = sizeof(struct sockaddr_un),
-      .sun_family = AF_UNIX,
-      .sun_path = UNIX_SOCKET,
-  };
-
-  unlink(saddr.sun_path);
-
-  socklen_t saddr_len = sizeof(saddr);
-
-  rc = bind(server_fd, (struct sockaddr *)&saddr, saddr_len);
-  if (rc < 0) {
-    err(EXIT_FAILURE, "cannot bind server socket");
-  }
-
-  rc = chmod(saddr.sun_path, SOCKET_MODE);
-  if (rc < 0) {
-    err(EXIT_FAILURE, "cannot set server socket mode");
-  }
-
-  listen(server_fd, 10);
 
   // LCD configuration
 
@@ -307,7 +341,6 @@ int main(int argc, char *argv[]) {
           "Loading ... Loading ... " // description
           ,
           sizeof(message));
-
 #else
   const char message[] =
       "               "                         // initial spaces
@@ -315,6 +348,11 @@ int main(int argc, char *argv[]) {
       "27-33度  多雲，午後有局部短暫雷陣雨"     // sample text
       ;
 #endif
+
+  char message1[500];
+  char message2[500];
+  memset(message1, 0, sizeof(message1));
+  memset(message2, 0, sizeof(message2));
 
   bool sync = false;
   for (;;) {
@@ -387,7 +425,8 @@ int main(int argc, char *argv[]) {
 
     fd_set accepting;
     FD_ZERO(&accepting);
-    FD_SET(server_fd, &accepting);
+    FD_SET(server_1_fd, &accepting);
+    FD_SET(server_2_fd, &accepting);
 
     struct timeval timeout = {
         .tv_sec = 0,
@@ -398,15 +437,35 @@ int main(int argc, char *argv[]) {
       err(EXIT_FAILURE, "cannot select on server socket");
     }
 
-    if (FD_ISSET(server_fd, &accepting)) {
-      int client_fd = accept(server_fd, NULL, NULL);
+    if (FD_ISSET(server_1_fd, &accepting)) {
+      int client_fd = accept(server_1_fd, NULL, NULL);
 
       write(client_fd, "send a one line message:\r\n", 7);
 
-      ssize_t n = read(client_fd, message, sizeof(message) - 1);
+      ssize_t n = read(client_fd, message1, sizeof(message1) - 1);
       if (n >= 0) {
-        message[n] = '\0';
+        message1[n] = '\0';
         // printf("%s", message);
+        strlcpy(message, message1, sizeof(message));
+        strlcat(message, message2, sizeof(message));
+      }
+
+      close(client_fd);
+
+      m_pos = 0; // reset scroll point
+    }
+
+    if (FD_ISSET(server_2_fd, &accepting)) {
+      int client_fd = accept(server_2_fd, NULL, NULL);
+
+      write(client_fd, "send a one line message:\r\n", 7);
+
+      ssize_t n = read(client_fd, message2, sizeof(message2) - 1);
+      if (n >= 0) {
+        message2[n] = '\0';
+        // printf("%s", message2);
+        strlcpy(message, message1, sizeof(message));
+        strlcat(message, message2, sizeof(message));
       }
 
       close(client_fd);
@@ -416,7 +475,7 @@ int main(int argc, char *argv[]) {
   }
 
   // ILI9486_rect_rgba(70, 50, 0, 0, abitmap.width, abitmap.rows,
-  // abitmap.pitch,
+  //                  abitmap.pitch,
   //                  abitmap.buffer);
   ILI9486_refresh();
   sleep(2);
